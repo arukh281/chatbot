@@ -4,20 +4,38 @@ import { useState } from 'react';
 import { Send, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Image from 'next/image';
-import * as XLSX from 'xlsx';
 
 // Add this function at the top of ChatWindow.tsx or import it from a utility file
 async function sendMessageToChatbot(userMessage: string) {
-  const response = await fetch("http://127.0.0.1:5001/chat", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ message: userMessage }),
-  });
+  try {
+    const response = await fetch("http://127.0.0.1:5001/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ message: userMessage }),
+    });
 
-  const data = await response.json();
-  return data;
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    console.log("Chatbot response:", data); // Debug log
+
+    return {
+      response: data.response,
+      confidence: data.confidence,
+      actualAnswer: data.actualAnswer || null
+    };
+  } catch (error) {
+    console.error("Error in sendMessageToChatbot:", error);
+    return {
+      response: "Sorry, there was an error communicating with the chatbot.",
+      confidence: 0,
+      actualAnswer: null
+    };
+  }
 }
 
 async function sendFeedback(question: string, answer: string, feedbackType: string) {
@@ -34,7 +52,7 @@ async function sendFeedback(question: string, answer: string, feedbackType: stri
         feedback_type: feedbackType
       }),
     });
-    
+
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
@@ -49,11 +67,11 @@ interface Message {
   sender: 'user' | 'bot';
   type?: 'confirmation' | 'normal' | 'clarification' | 'thank_you';
   feedbackRequested?: boolean;
+  actualAnswer?: string;
 }
 
 const QuickQueries = [
   "Admission Process",
-  "Fee Structure",
   "Course Duration",
   "Placement Statistics",
   "Faculty Information",
@@ -65,44 +83,9 @@ export default function ChatWindow() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSend = async () => {
-    if (!input.trim()) return;
-
-    // Check if input is a contact query
-    const contactQueryMatch = input.trim().toLowerCase().match(/(?:contact|email|phone|details)\s+of\s+(.+)/);
-    if (contactQueryMatch) {
-      const name = contactQueryMatch[1].trim();
-      const userMessage: Message = {
-        id: Date.now().toString(),
-        text: input,
-        sender: 'user',
-      };
-      setMessages((prev) => [...prev, userMessage]);
-      setInput('');
-      setIsLoading(true);
-
-      try {
-        const { response, confidence } = await sendMessageToChatbot(input);
-        const botResponse: Message = {
-          id: (Date.now() + 1).toString(),
-          text: confidence > 0.6 ? response : `Currently no contact exists for ${name}`,
-          sender: 'bot',
-          feedbackRequested: confidence > 0.6
-        };
-        setMessages((prev) => [...prev, botResponse]);
-      } catch (error) {
-        console.error("Error communicating with the chatbot:", error);
-        const errorMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          text: "Sorry, something went wrong. Please try again later.",
-          sender: 'bot',
-        };
-        setMessages((prev) => [...prev, errorMessage]);
-      } finally {
-        setIsLoading(false);
-      }
-      return;
-    }
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || isLoading) return;
 
     // Add user's message first
     const userMessage: Message = {
@@ -115,17 +98,42 @@ export default function ChatWindow() {
     setIsLoading(true);
 
     try {
-      const { response, confidence } = await sendMessageToChatbot(input);
+      const { response, confidence, actualAnswer } = await sendMessageToChatbot(input);
+      console.log("Response from chatbot:", { response, confidence, actualAnswer }); // Debug log
 
-      // If confidence is 0.0 and response contains "contact information", it's a name query
-      if (confidence === 0.0 && response.includes("contact information")) {
-        const clarificationMessage: Message = {
+      // Check if this is a direct contact information response
+      const isContactInfo = response.includes("Contact information for") &&
+        (response.includes("Email:") || response.includes("Phone:") || response.includes("Location:"));
+
+      if (isContactInfo) {
+        // This is a direct contact information response
+        const botResponse: Message = {
           id: (Date.now() + 1).toString(),
           text: response,
           sender: 'bot',
-          type: 'clarification'
+          feedbackRequested: true
         };
-        setMessages((prev) => [...prev, clarificationMessage]);
+        setMessages((prev) => [...prev, botResponse]);
+
+        // Add a thank you message
+        const thankYouMessage: Message = {
+          id: (Date.now() + 2).toString(),
+          text: "Thank you for your contribution! What else can I help you with?",
+          sender: 'bot',
+          type: 'thank_you'
+        };
+        setMessages((prev) => [...prev, thankYouMessage]);
+      }
+      // If we have an actual answer, it means we need confirmation
+      else if (actualAnswer) {
+        const confirmationMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: response,
+          sender: 'bot',
+          type: 'confirmation',
+          actualAnswer: actualAnswer // Store the actual answer
+        };
+        setMessages((prev) => [...prev, confirmationMessage]);
       } else {
         // Regular response
         const botResponse: Message = {
@@ -155,20 +163,33 @@ export default function ChatWindow() {
       text: query,
       sender: 'user'
     };
-    
+
     setMessages(prev => [...prev, userMessage]);
     setIsLoading(true);
 
     try {
-      const { response, confidence } = await sendMessageToChatbot(query);
-      
-      const botResponse: Message = {
-        id: (Date.now() + 1).toString(),
-        text: response,
-        sender: 'bot',
-        feedbackRequested: confidence > 0.6
-      };
-      setMessages(prev => [...prev, botResponse]);
+      const { response, confidence, actualAnswer } = await sendMessageToChatbot(query);
+
+      // If we have an actual answer, it means we need confirmation
+      if (actualAnswer) {
+        const confirmationMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: response,
+          sender: 'bot',
+          type: 'confirmation',
+          actualAnswer: actualAnswer // Store the actual answer
+        };
+        setMessages(prev => [...prev, confirmationMessage]);
+      } else {
+        // Regular response
+        const botResponse: Message = {
+          id: (Date.now() + 1).toString(),
+          text: response,
+          sender: 'bot',
+          feedbackRequested: confidence > 0.6
+        };
+        setMessages(prev => [...prev, botResponse]);
+      }
     } catch (error) {
       console.error("Error communicating with the chatbot:", error);
       const errorMessage: Message = {
@@ -182,39 +203,60 @@ export default function ChatWindow() {
     }
   };
 
-  const handleConfirmation = (response: 'yes' | 'no') => {
+  const handleConfirmation = async (response: 'yes' | 'no', message: Message) => {
+    console.log("Handling confirmation:", response, message); // Debug log
+
     const userMessage: Message = {
       id: Date.now().toString(),
       text: response === 'yes' ? "Yes, that's correct" : "No, that's not what I meant",
       sender: 'user'
     };
-    
+
     setMessages(prev => [...prev, userMessage]);
     setIsLoading(true);
 
-    // Get the name from the previous bot message
-    const previousBotMessage = messages[messages.length - 1];
-    const nameMatch = previousBotMessage.text.match(/for\s+([^?]+)\?/);
-    const name = nameMatch ? nameMatch[1].trim() : '';
+    // If user clicks No, save the question to MongoDB
+    if (response === 'no') {
+      try {
+        // Get the original question from the messages array
+        const originalQuestion = messages[messages.indexOf(message) - 1]?.text || '';
 
-    // Simulate API response based on confirmation
-    setTimeout(async () => {
-      if (response === 'yes' && name) {
-        // If user confirmed they want contact info, send the actual query
-        const { response: contactResponse, confidence } = await sendMessageToChatbot(`contact of ${name}`);
-        
-        // Show the contact information
+        // Send to MongoDB
+        const feedbackResponse = await fetch('http://127.0.0.1:5001/feedback', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            question: originalQuestion,
+            answer: message.text,
+            feedback_type: 'not_helpful'
+          }),
+        });
+
+        if (!feedbackResponse.ok) {
+          throw new Error('Failed to save feedback');
+        }
+      } catch (error) {
+        console.error('Error saving feedback:', error);
+      }
+    }
+
+    setTimeout(() => {
+      if (response === 'yes' && message.actualAnswer) {
+        // If user confirmed, show the actual answer
+        console.log("Showing actual answer:", message.actualAnswer); // Debug log
         const botResponse: Message = {
           id: (Date.now() + 1).toString(),
-          text: contactResponse,
+          text: message.actualAnswer,
           sender: 'bot',
-          feedbackRequested: confidence > 0.6
+          feedbackRequested: true
         };
         setMessages(prev => [...prev, botResponse]);
       } else {
         const botResponse: Message = {
           id: (Date.now() + 1).toString(),
-          text: "I apologize for the confusion. Could you please specify what information you're looking for about this person?",
+          text: "I apologize for the confusion. Could you please rephrase your question?",
           sender: 'bot'
         };
         setMessages(prev => [...prev, botResponse]);
@@ -224,20 +266,21 @@ export default function ChatWindow() {
   };
 
   const handleFeedback = async (response: 'yes' | 'no', questionMsg: Message, answerMsg: Message) => {
+    // Only save feedback if it's a "not helpful" response
     if (response === 'no') {
       try {
-        const response = await fetch('/api/updateExcel', {
+        // Get the actual question from the messages array
+        const actualQuestion = messages[messages.indexOf(questionMsg) - 1]?.text || questionMsg.text;
+
+        const response = await fetch('http://127.0.0.1:5001/feedback', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0'
           },
           body: JSON.stringify({
-            question: questionMsg.text,
+            question: actualQuestion,
             answer: answerMsg.text,
-            timestamp: new Date().toISOString() // Add timestamp to prevent caching
+            feedback_type: 'not_helpful'
           }),
         });
 
@@ -250,31 +293,63 @@ export default function ChatWindow() {
     }
 
     if (response === 'yes') {
-      const thankYouMessage: Message = {
-        id: Date.now().toString(),
-        text: "Thank you for your contribution! What else can I help you with?",
-        sender: 'bot',
-        type: 'thank_you'  // Add this type
-      };
-      setMessages((prev) => [...prev, thankYouMessage]);
-    } else if (response === 'no') {
-      // Send the actual question and answer texts
-      await sendFeedback(questionMsg.text, answerMsg.text, "doubtful");
+      // Check if this is a faculty contact query
+      const isFacultyQuery = answerMsg.text.includes("Would you like to know the contact information for");
+      const isLocationQuery = answerMsg.text.includes("Did you mean contact information for");
 
-      // Log for debugging
-      console.log('Feedback sent:', {
-        question: questionMsg.text,
-        answer: answerMsg.text,
-        type: 'doubtful'
-      });
+      if (isFacultyQuery || isLocationQuery) {
+        // Extract the faculty name from the message
+        let facultyName = "";
+        if (isFacultyQuery) {
+          facultyName = answerMsg.text.replace("Would you like to know the contact information for", "").trim();
+        } else if (isLocationQuery) {
+          facultyName = answerMsg.text.replace("Did you mean contact information for", "").trim();
+        }
 
-      const feedbackMessage: Message = {
-        id: Date.now().toString(),
-        text: "Your feedback has been recorded. Thank you for helping us improve!",
-        sender: 'bot',
-        type: 'thank_you'  // Add this type
-      };
-      setMessages((prev) => [...prev, feedbackMessage]);
+        // Remove the question mark if present
+        const cleanFacultyName = facultyName.endsWith("?") ? facultyName.slice(0, -1) : facultyName;
+
+        // Send a new query to get the contact information
+        try {
+          // Use a direct query format that the backend will recognize
+          const { response, confidence, actualAnswer } = await sendMessageToChatbot(`contact of ${cleanFacultyName}`);
+
+          // Add the contact information as a new message
+          const contactMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            text: response,
+            sender: 'bot',
+            feedbackRequested: true
+          };
+          setMessages((prev) => [...prev, contactMessage]);
+
+          // Add a thank you message
+          const thankYouMessage: Message = {
+            id: (Date.now() + 2).toString(),
+            text: "Thank you for your contribution! What else can I help you with?",
+            sender: 'bot',
+            type: 'thank_you'
+          };
+          setMessages((prev) => [...prev, thankYouMessage]);
+        } catch (error) {
+          console.error("Error getting faculty contact:", error);
+          const errorMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            text: "Sorry, I couldn't retrieve the contact information. Please try again.",
+            sender: 'bot'
+          };
+          setMessages((prev) => [...prev, errorMessage]);
+        }
+      } else {
+        // Regular thank you message for non-faculty queries
+        const thankYouMessage: Message = {
+          id: Date.now().toString(),
+          text: "Thank you for your contribution! What else can I help you with?",
+          sender: 'bot',
+          type: 'thank_you'
+        };
+        setMessages((prev) => [...prev, thankYouMessage]);
+      }
     }
   };
 
@@ -326,23 +401,22 @@ export default function ChatWindow() {
             className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div
-              className={`max-w-[85%] sm:max-w-[75%] p-3 md:p-4 rounded-2xl ${
-                message.sender === 'user'
-                  ? 'bg-orange-500 text-white'
-                  : 'bg-white shadow-md'
-              }`}
+              className={`max-w-[85%] sm:max-w-[75%] p-3 md:p-4 rounded-2xl ${message.sender === 'user'
+                ? 'bg-orange-500 text-white'
+                : 'bg-white shadow-md'
+                }`}
             >
               <p className="text-sm md:text-base whitespace-pre-line">{message.text}</p>
               {message.type === 'confirmation' && (
                 <div className="mt-2 flex gap-2">
                   <button
-                    onClick={() => handleFeedback('yes', messages[messages.length - 2], message)}
+                    onClick={() => handleConfirmation('yes', message)}
                     className="bg-green-500 text-white px-3 py-1 rounded-full text-sm"
                   >
                     Yes
                   </button>
                   <button
-                    onClick={() => handleFeedback('no', messages[messages.length - 2], message)}
+                    onClick={() => handleConfirmation('no', message)}
                     className="bg-red-500 text-white px-3 py-1 rounded-full text-sm"
                   >
                     No
@@ -352,13 +426,13 @@ export default function ChatWindow() {
               {message.type === 'clarification' && (
                 <div className="mt-2 space-x-2">
                   <button
-                    onClick={() => handleConfirmation('yes')}
+                    onClick={() => handleConfirmation('yes', message)}
                     className="text-sm text-gray-500 hover:text-green-500"
                   >
                     👍 Yes
                   </button>
                   <button
-                    onClick={() => handleConfirmation('no')}
+                    onClick={() => handleConfirmation('no', message)}
                     className="text-sm text-gray-500 hover:text-red-500"
                   >
                     👎 No
@@ -367,18 +441,38 @@ export default function ChatWindow() {
               )}
               {message.sender === 'bot' && !message.type && (  // Only show for bot messages that aren't special types
                 <div className="mt-2 space-x-2">
-                  <button
-                    onClick={() => handleFeedback('yes', messages[index - 1], message)}
-                    className="text-sm text-gray-500 hover:text-green-500"
-                  >
-                    👍 Helpful
-                  </button>
-                  <button
-                    onClick={() => handleFeedback('no', messages[index - 1], message)}
-                    className="text-sm text-gray-500 hover:text-red-500"
-                  >
-                    👎 Not Helpful
-                  </button>
+                  {message.text.includes("Would you like to know the contact information for") ||
+                    message.text.includes("Did you mean contact information for") ? (
+                    <>
+                      <button
+                        onClick={() => handleFeedback('yes', messages[index - 1], message)}
+                        className="text-sm text-gray-500 hover:text-green-500"
+                      >
+                        👍 Yes
+                      </button>
+                      <button
+                        onClick={() => handleFeedback('no', messages[index - 1], message)}
+                        className="text-sm text-gray-500 hover:text-red-500"
+                      >
+                        👎 No
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => handleFeedback('yes', messages[index - 1], message)}
+                        className="text-sm text-gray-500 hover:text-green-500"
+                      >
+                        👍 Helpful
+                      </button>
+                      <button
+                        onClick={() => handleFeedback('no', messages[index - 1], message)}
+                        className="text-sm text-gray-500 hover:text-red-500"
+                      >
+                        👎 Not Helpful
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -400,12 +494,12 @@ export default function ChatWindow() {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+            onKeyPress={(e) => e.key === 'Enter' && handleSendMessage(e)}
             placeholder="Type your message..."
             className="flex-1 px-4 py-2 rounded-full border border-orange-200 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm md:text-base"
           />
           <button
-            onClick={handleSend}
+            onClick={handleSendMessage}
             className="bg-orange-500 text-white p-3 rounded-full hover:bg-orange-600 transition-colors"
           >
             <Send className="h-5 w-5" />
