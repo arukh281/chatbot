@@ -6,6 +6,7 @@ from pymongo import MongoClient
 import os
 from dotenv import load_dotenv
 from datetime import datetime  # Add this import
+import certifi  # Add certifi import
 
 # Load environment variables from .env file
 load_dotenv()
@@ -15,7 +16,8 @@ CORS(app)  # Enable CORS
 
 # MongoDB connection
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
-client = MongoClient(MONGO_URI)
+ca = certifi.where()  # Get the path to the certificate authority file
+client = MongoClient(MONGO_URI, tlsCAFile=ca)
 db = client["university_faq"]
 feedback_collection = db["feedback"]
 faculty_collection = db["faculty"]
@@ -90,4 +92,4 @@ def home():
     return "University FAQ Chatbot API is running. Send POST requests to /chat"
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5001)
+    app.run(debug=True, host='0.0.0.0', port=5001)

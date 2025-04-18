@@ -9,13 +9,15 @@ import pymongo
 from pymongo import MongoClient
 import os
 from dotenv import load_dotenv
+import certifi
 
 # Load environment variables from .env file
 load_dotenv()
 
 # MongoDB connection
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
-client = MongoClient(MONGO_URI)
+ca = certifi.where()
+client = MongoClient(MONGO_URI, tlsCAFile=ca)
 db = client["university_faq"]
 faculty_collection = db["faculty"]
 questions_collection = db["questions"]
