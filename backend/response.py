@@ -571,8 +571,8 @@ def chatbot_response(user_message):
         # First try exact match with the given name
         for faculty_name, contact_info in faculty_contacts.items():
             if name.lower() in faculty_name.lower() or faculty_name.lower() in name.lower():
-                # Instead of returning contact info directly, ask for confirmation
-                return 0.0, f"Would you like to know the contact information for {faculty_name}?", f"Contact information for {faculty_name}:\n" + \
+                # Return contact info directly since this is a contact request
+                return 0.0, f"Contact information for {faculty_name}:\n" + \
                     (f"Location: {contact_info.get('seating', '')}\n" if contact_info.get('seating') else '') + \
                     f"Email: {contact_info.get('email', 'Email not available')}\n" + \
                     f"Phone: {contact_info.get('phone', 'Phone not available')}"
@@ -584,8 +584,8 @@ def chatbot_response(user_message):
             faculty_data = get_faculty_data()
             faculty_info = faculty_data.get(fuzzy_match, {})
             
-            # Ask for confirmation with the fuzzy matched name
-            return 0.0, f"Would you like to know the contact information for {fuzzy_match}?", f"Contact information for {fuzzy_match}:\n" + \
+            # Return contact info directly since this is a contact request
+            return 0.0, f"Contact information for {fuzzy_match}:\n" + \
                 (f"Location: {faculty_info.get('seating', '')}\n" if faculty_info.get('seating') else '') + \
                 f"Email: {faculty_info.get('email', 'Email not available')}\n" + \
                 f"Phone: {faculty_info.get('phone', 'Phone not available')}"

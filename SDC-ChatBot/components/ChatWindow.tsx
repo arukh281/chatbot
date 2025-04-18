@@ -243,16 +243,40 @@ export default function ChatWindow() {
     }
 
     setTimeout(() => {
-      if (response === 'yes' && message.actualAnswer) {
-        // If user confirmed, show the actual answer
-        console.log("Showing actual answer:", message.actualAnswer); // Debug log
-        const botResponse: Message = {
-          id: (Date.now() + 1).toString(),
-          text: message.actualAnswer,
-          sender: 'bot',
-          feedbackRequested: true
-        };
-        setMessages(prev => [...prev, botResponse]);
+      if (response === 'yes') {
+        if (message.actualAnswer) {
+          // If user confirmed and we have an actual answer, show it
+          console.log("Showing actual answer:", message.actualAnswer); // Debug log
+          const botResponse: Message = {
+            id: (Date.now() + 1).toString(),
+            text: message.actualAnswer,
+            sender: 'bot',
+            feedbackRequested: true
+          };
+          setMessages(prev => [...prev, botResponse]);
+        } else if (message.text.includes("Would you like to know the contact information for")) {
+          // Extract faculty name from the confirmation message
+          const facultyName = message.text.replace("Would you like to know the contact information for", "").trim().replace("?", "");
+
+          // Send a new query to get the contact information
+          sendMessageToChatbot(`contact of ${facultyName}`).then(({ response }) => {
+            const contactMessage: Message = {
+              id: (Date.now() + 1).toString(),
+              text: response,
+              sender: 'bot',
+              feedbackRequested: true
+            };
+            setMessages(prev => [...prev, contactMessage]);
+          }).catch(error => {
+            console.error("Error getting faculty contact:", error);
+            const errorMessage: Message = {
+              id: (Date.now() + 1).toString(),
+              text: "Sorry, I couldn't retrieve the contact information. Please try again.",
+              sender: 'bot'
+            };
+            setMessages(prev => [...prev, errorMessage]);
+          });
+        }
       } else {
         const botResponse: Message = {
           id: (Date.now() + 1).toString(),
